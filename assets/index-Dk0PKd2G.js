@@ -181,7 +181,7 @@ Please report this to https://github.com/markedjs/marked.`,e){let r="<p>An error
 | 工具使用、协议 | MCP Gateway、MCP 合规治理、A2A / ACP 跨 Runtime 委派 |
 | 评测、实验 | ：20 类 deepeval 指标、用例合成、Judge 校准、红队、Bad Case、sticky bucket A/B + T 检验 |
 | 稳定性、成本 | 规则预筛、内容哈希缓存、降级；备用模型链；智能模型路由；令牌桶限流；VMPortal 全局令牌桶 |
-| 安全合规、权限 | AI 应用合规评估规则引擎；Ninja 微服务权限；防提权；读校验 shadow 灰度；发布前安全扫描门禁；per-agent 票；Webhook 鉴权按工作区范围解析 |
+| 安全合规、权限 | AI 应用合规评估规则引擎；Ninja 微服务权限；防提权；读校验 shadow 灰度；发布前安全扫描门禁；per-agent 票 |
 | AI 编程工具 | Kiro 为主力（Spec、10 个 hook、Steering），Kage 集成 Kiro / OpenCode / DSH 三种 CLI |
 
 ---
@@ -248,7 +248,6 @@ Please report this to https://github.com/markedjs/marked.`,e){let r="<p>An error
 
 **架构演进（2026.11）**：单体拆为 Center（纳管、策略、计费）、工作区服务（Daemon、编排、小队、执行机）、渠道网关三个服务 + 公共库 。用守卫测试禁止服务之间互相 import，CI 冒烟覆盖三个仓库的 9 个进程角色。
 - 拆分后的联调问题：编码智能体的 A2A 卡片地址原来用 PublicBase 生成，编排步骤调用报 missing Bearer token。改为优先取 KAGE_WORKSPACE_URL（集群内地址），未配置才回落 PublicBase；新增单例作业 collab.reproject_agents（启动 30s 后首轮，之后每 10 分钟）重新登记卡片，地址变化才写 kex_ws_setting.a2a_card_url，失败只记日志、不把智能体标成投影失败。另外 kit 里 KAGE_WORKSPACE_URL 在 remote 模式曾回落到渠道网关地址，Center 每次调工作区都等满超时，非管理员打开 /v1/admin/bootstrap 多等 15s，改为缺省指向 。
-- ★ 拆库前的表归属梳理（2026-11-26 文档 service-split-v2-db-ownership.md）：归属来源是 v（由 gen-table-ownership.py 生成），加上拆仓后新增的迁移和 的 lens_* 表（TSV 没收录）。统计结果：center112 张，workspace96 张（TSV 93 + 新增 3），channel7 张，lens8 张，公用 infra 3 张。归属规则：infra 是 platform_events / kage_leader_lease / data_migrations / schema_migrations*；channel 是 kex_channel_* / wecom_*；workspace 是其余 kex_*、delegation_flow*、deleg_flow_preview、orch_plugin*、orch_step_jobs*、async_task_checkpoints；其余全部归 center。校验方式是静态扫描三个服务仓库的 Go 代码（不含 _test.go 和 third_party）里的 SQL 表引用，再加三份 0001_baseline_* 里的外键。结论：三个服务代码层面已无跨域 SQL 直读直写，也无跨域外键，具备拆库条件。文档写明的盲区：运行时拼接表名的 SQL 没覆盖，没有连库核对各环境实际的表。
 
 **Agent Harness**
 - ★ 基于 dsh 内核构建企业 Agent Harness：内核钉死版本，能力以 Bundle 扩展，不改上游 agent loop；web / headless 两套 profile，headless 用只读预设，供 CI 无人值守执行。
@@ -287,8 +286,7 @@ Please report this to https://github.com/markedjs/marked.`,e){let r="<p>An error
 - 唤醒规则防环：每个 Issue 最多 32 条规则；每条默认最多触发 20 次，每小时最多 12 次，最小间隔 1 分钟；10 分钟内触发 3 次判定为循环。智能体给自己定时续跑按卡合计，6 小时最多 3 次，防止"写不完再约一次"把模型额度耗光。
 - 工作区任务唤醒总表：GET /v1/workspaces/{wsId}/wakeups 支持分组计数、来源 / 触发方式 / 唤醒对象筛选、近 7 天运行和最近一轮；行内编辑唤醒指令用 expected_instruction 做冲突检测（BINARY 比较），没改动直接成功；卡范围的任务票不能读这张总表。
 - 调度（autopilot）可关联项目：运行建的卡落在项目里；项目删除时关联的调度自动暂停并记 pause_reason，不会悄悄改成往工作区根上建卡。
-- GitHub PR webhook：POST /v1/github/webhook 用 X-Hub-Signature-256 校验，支持全局 secret 或 ?ws= 指定工作区的 secret，请求体上限 25MB（PR 事件带完整对象，1MB 截断后签名必然对不上）；PR 合并后的状态推进不触发交接。鉴权结果现在带工作区范围，用于下面的 MR 关联。
-- ★ MR / PR 与卡片的关联（2026.11.26，代码注释写明对齐 Multica 的 prLinkPolicy / reconcileAutoLinks）：只认 MR 自己声明的卡号，不再扫描评论里贴的 MR 链接。声明方式有两种：标题或分支名里的卡号（如 KEX-12），或标题 / 描述里紧跟 close(s/d)、fix(es/ed)、resolve(s/d) 的卡号（Closes KEX-12）；描述里随口提到的卡号不算。
+- GitHub PR webhook：POST /v1/github/webhook 用 X-Hub-Signature-256 校验，支持全局 secret 或 ?ws= 指定工作区的 secret，请求体上限 25MB（PR 事件带完整对象，1MB 截断后签名必然对不上）；PR 合并后的状态推进不触发交接。
 - webhook 鉴权返回工作区范围：工作区专属 secret 只在配了这个 secret 的工作区里解析卡号，不看仓库；平台级 secret（一条 group webhook 覆盖全部工作区）只认绑定了 MR 所在仓库的工作区，仓库地址取不到就一个工作区都不认。GitLab 的 token 同一个 secret 配给多个工作区时，范围就是这一组，不放开成全局。
 - 按候选工作区查卡，去掉跨工作区按卡号扫描。恰好一个工作区命中才挂；多个工作区命中算歧义，不挂，已有的自动关联也拆掉；读库出错、结果不确定时，本次不建也不拆。
 - 拆除规则：MR 未合并时去掉卡号，自动关联随之拆掉；合并 / 关闭后不再拆（工作已落地），但歧义的卡号照拆，宁可少一条可手挂的关联，也不在合并时推动别人的卡。人工解绑过的关联会记住，不再自动挂回。
